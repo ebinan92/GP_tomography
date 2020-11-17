@@ -16,8 +16,8 @@ plt.rcParams['font.size'] = 9  # フォントの大きさ
 plt.rcParams['axes.linewidth'] = 1.0  # 軸の線幅edge linewidth。囲みの太さ
 
 torch.manual_seed(1)
-D_DIM = 64 #detector dimensition
-MAT_DIM = 42 #reconstructed image dimenstion
+D_DIM = 42 #detector dimensition
+MAT_DIM = 64 #reconstructed image dimenstion
 NOISE_RATE = 0.125
 KERNEL = "SE" # switch between nonstationary(NS) and stationary(SE)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -69,8 +69,8 @@ class NNGPT(torch.nn.Module):
                 device, dtype=torch.float32)
         self.d_cov_inv = torch.inverse(self.d_cov).to(
             device, dtype=torch.float32)
-        all_region = [(i, j) for i in range(D_DIM)
-                      for j in range(D_DIM)]
+        all_region = [(i, j) for i in range(MAT_DIM)
+                      for j in range(MAT_DIM)]
         outer_region = list(
             zip(*np.where(((np.abs(circle) < 0.15) & (np.abs(circle) > 0.13)))))
         inner_region = list(
@@ -85,11 +85,11 @@ class NNGPT(torch.nn.Module):
         self.i_len = len(inner_region)
         self.m_len = len(middle_region)
         self.x = torch.tensor(
-            list(map(lambda x: ((x[0]-int(D_DIM/2)) * norm, (x[1]-int(D_DIM/2)) * norm), all_region))).to(device, dtype=torch.float32)
+            list(map(lambda x: ((x[0]-int(MAT_DIM/2)) * norm, (x[1]-int(MAT_DIM/2)) * norm), all_region))).to(device, dtype=torch.float32)
         self.known_region = torch.tensor(
-            list(map(lambda x: ((x[0]-int(D_DIM/2)) * norm, (x[1]-int(D_DIM/2)) * norm), outer_region + inner_region + middle_region))).to(device, dtype=torch.float32)
+            list(map(lambda x: ((x[0]-int(MAT_DIM/2)) * norm, (x[1]-int(MAT_DIM/2)) * norm), outer_region + inner_region + middle_region))).to(device, dtype=torch.float32)
         self.unknown_region = torch.tensor(
-            list(map(lambda x: ((x[0]-int(D_DIM/2)) * norm, (x[1]-int(D_DIM/2)) * norm), unknown_region))).to(device, dtype=torch.float32)
+            list(map(lambda x: ((x[0]-int(MAT_DIM/2)) * norm, (x[1]-int(MAT_DIM/2)) * norm), unknown_region))).to(device, dtype=torch.float32)
         self.known_region_list = list(
             list(zip(*(outer_region + inner_region + middle_region))))
         self.unknown_region_list = list(list(zip(*(unknown_region))))
@@ -153,14 +153,14 @@ class NNGPT(torch.nn.Module):
 
 
 # %% Input data
-input_name = f"screen_{MAT_DIM}_{D_DIM}" # Detector output
+input_name = f"screen_{D_DIM}" # Detector output
 val1 = np.load(input_name + ".npy")
 val1 = np.where(np.isnan(val1), 0, val1)
-mat = np.load(f"mat_{MAT_DIM}_{D_DIM}.npy") # Sight line on poloidal cross section
-img = np.load(f"img_{D_DIM}.npy")[:, ::-1] # Target for reconstruction
-circle = np.load(f"circle_{D_DIM}.npy") # for length scale used by NSGPT
+mat = np.load(f"mat_{D_DIM}_{MAT_DIM}.npy") # Sight line on poloidal cross section
+img = np.load(f"img_{MAT_DIM}.npy")[:, ::-1] # Target for reconstruction
+circle = np.load(f"circle_{MAT_DIM}.npy") # for length scale used by NSGPT
 model = NNGPT(R=mat, d=val1, circle=circle)
-plt.imshow(img)
+plt.imshow(img,"bwr")
 plt.colorbar()
 
 # %% Model setup
@@ -210,8 +210,8 @@ if KERNEL  == "NS":
 else:
     plt.title(
         f"Stationary Gaussian Process method \n RMSE:{rmse_loss:.2f}, SSIM: {ssim_loss:.2f}")
-y = np.linspace(-0.45, 0.45, D_DIM)
-x = np.linspace(1.35, 2.25, D_DIM)
+y = np.linspace(-0.45, 0.45, MAT_DIM)
+x = np.linspace(1.35, 2.25, MAT_DIM)
 X, Y = np.meshgrid(x, y)
 plt.ylabel("Height (m)")
 plt.xlabel("Major radius (m)")
@@ -222,9 +222,17 @@ plt.savefig(f"{KERNEL}.png")
 # %% Evaluation of cross section 
 plt.title(
     f"Sectional view at height 0m ({KERNEL})")
-plt.plot(x, out_f[int(D_DIM/2), :], label="Estimated")
-plt.plot(x, img[int(D_DIM/2), :], label="True")
+plt.plot(x, out_f[int(MAT_DIM/2), :], label="Estimated")
+plt.plot(x, img[int(MAT_DIM/2), :], label="True")
 plt.ylabel("Emission")
 plt.xlabel("Major radius (m)")
 plt.legend()
+# %%
+s = prev_model.post_cov.detach().cpu().numpy()
+cov = np.sqrt(np.diag(s).reshape(*img.shape))
+plt.imshow(cov)
+plt.colorbar()
+plt.savefig("SE_sigma.png")
+
+
 # %%

@@ -306,7 +306,7 @@ x = to.screen_pos_list[:, 0].reshape(to.D_DIM, to.D_DIM)
 z = to.screen_pos_list[:, 2].reshape(to.D_DIM, to.D_DIM)
 plt.pcolormesh(x, z, screen.reshape(to.D_DIM, to.D_DIM)[:, ::-1], cmap='bwr')
 plt.colorbar()
-np.save(f"screen_{to.D_DIM}_{MAT_DIM}", screen)
+np.save(f"screen_{to.D_DIM}", screen)
 # %% 
 '''Get sight line'''
 r_list = []
@@ -398,4 +398,6 @@ for r, z, mask in zip(r_list, z_list, mask_list):
 projection_mat = projection_mat.reshape(to.D_DIM**2, MAT_DIM**2)
 np.save(f"mat_{to.D_DIM}_{MAT_DIM}", projection_mat)
 plt.imshow(view_mat)
+plt.colorbar()
+plt.savefig("viewmat.png")
 # %%
