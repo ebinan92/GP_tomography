@@ -10,6 +10,7 @@ class BayesianTomography(torch.nn.Module):
             R,
             d,
             ls_img,
+            radius_list,
             device,
             noise_rate,
             kernel,
@@ -17,14 +18,11 @@ class BayesianTomography(torch.nn.Module):
             eps=1e-6):
         super(BayesianTomography, self).__init__()
         self.device = device
-        self.le = torch.nn.Parameter(torch.tensor(1.))
-        self.lc = torch.nn.Parameter(torch.tensor(1.))
-        self.lm = torch.nn.Parameter(torch.tensor(1.))
-        self.l_se = torch.tensor(1.)
+        self.ls = torch.nn.Parameter(torch.ones(len(radius_list)).to(self.device, dtype=torch.float32))
+        self.l_se = torch.nn.Parameter(torch.tensor(1.))
         self.sigma_se = torch.nn.Parameter(torch.tensor(0.3))
         self.sigma_ns = torch.nn.Parameter(torch.tensor(1.))
-        self.sigma_noise = torch.nn.Parameter(
-            torch.tensor(noise_rate, device=self.device))
+        self.sigma_noise = torch.tensor(noise_rate, device=self.device)
         self.R = torch.tensor(R).to(self.device, dtype=torch.float32)
         self.kernel = kernel
         self.f_dim = int(np.sqrt(self.R.shape[1]))
@@ -50,34 +48,27 @@ class BayesianTomography(torch.nn.Module):
 
         all_region = [(i, j) for i in range(self.f_dim)
                       for j in range(self.f_dim)]
-        outer_region = list(
-            zip(*np.where(((np.abs(ls_img) < 0.2) & (np.abs(ls_img) > 0.17)))))
-        inner_region = list(
-            zip(*np.where(np.abs(ls_img) > 0.99)))
-        middle_region = list(
-            zip(*np.where(((np.abs(ls_img) < 0.42) & (np.abs(ls_img) > 0.4)))))
-
+        known_region = []
+        self.lens = []
+        for i, _ in enumerate(radius_list):
+            region = list(zip(*np.where(ls_img == i + 2)))
+            known_region.extend(region)
+            self.lens.append(len(region))
         unknown_region = list(
-            set(all_region) - (set(outer_region) | set(inner_region) | set(middle_region)))
-        self.o_len = len(outer_region)
-        self.i_len = len(inner_region)
-        self.m_len = len(middle_region)
+            set(all_region) - set(known_region))
         self.x = torch.tensor(list(map(lambda x: ((x[0] - int(self.f_dim / 2)) * norm, (x[1] - int(
             self.f_dim / 2)) * norm), all_region))).to(self.device, dtype=torch.float32)
         self.known_region = torch.tensor(list(map(lambda x: ((x[0] - int(self.f_dim / 2)) * norm, (x[1] - int(
-            self.f_dim / 2)) * norm), outer_region + inner_region + middle_region))).to(self.device, dtype=torch.float32)
+            self.f_dim / 2)) * norm), known_region))).to(self.device, dtype=torch.float32)
         self.unknown_region = torch.tensor(list(map(lambda x: ((x[0] - int(self.f_dim / 2)) * norm, (x[1] - int(
             self.f_dim / 2)) * norm), unknown_region))).to(self.device, dtype=torch.float32)
         self.known_region_list = list(
-            list(zip(*(outer_region + inner_region + middle_region))))
+            list(zip(*(known_region))))
         self.unknown_region_list = list(list(zip(*(unknown_region))))
-        self.ls = torch.empty(
-            len(outer_region) +
-            len(inner_region) +
-            len(middle_region)).to(
+        self.l_ns = torch.empty(sum(self.lens)).to(
             self.device,
             dtype=torch.float32)
-        del outer_region, inner_region, unknown_region, all_region, middle_region
+        del unknown_region, all_region, known_region
         gc.collect()
 
     def forward(self):
@@ -86,12 +77,12 @@ class BayesianTomography(torch.nn.Module):
         if self.kernel == "NS":
             X = torch.inverse(self.rbf_kernel(x, x))
             X2 = self.rbf_kernel(x, x2)
-            self.ls[:self.o_len] = self.le
-            self.ls[self.o_len:int(self.o_len + self.i_len)] = self.lc
-            self.ls[int(self.o_len + self.i_len):] = self.lm
-            tmp = torch.mean(self.ls).data
-            # tmp = ((self.le + self.lc + self.lm) / 3.).data
-            ls2 = tmp + torch.mm(X2.T, X).mv(self.ls - torch.mean(self.ls))
+            before = 0
+            for i, l in enumerate(self.lens):
+                self.l_ns[before:int(l + before)] = self.ls[i]
+                before += l
+            tmp = torch.mean(self.l_ns).data
+            ls2 = tmp + torch.mm(X2.T, X).mv(self.l_ns - torch.mean(self.l_ns))
             self.l_all = self.mk_l_matrix(ls2)
             f_cov = self.nonstationarykernel(self.l_all)
         else:
@@ -120,7 +111,7 @@ class BayesianTomography(torch.nn.Module):
     def mk_l_matrix(self, ls2):
         scale_length_list = torch.empty(
             (self.f_dim, self.f_dim)).to(self.device, dtype=torch.float32)
-        scale_length_list[self.known_region_list] = self.ls
+        scale_length_list[self.known_region_list] = self.l_ns
         scale_length_list[self.unknown_region_list] = ls2
         return scale_length_list.flatten()
 
@@ -219,7 +210,7 @@ class RMSELoss(torch.nn.Module):
         return loss
 
 
-class MGLoss(torch.nn.Module):
+class EvidenceLoss(torch.nn.Module):
     '''
     - log Evidence loss
     '''
